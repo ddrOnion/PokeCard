@@ -81,6 +81,18 @@ const SPECIAL_CARD_REGISTRY = {
     imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/M2a/049970_P_NNOZEKUROMU.jpg',
     defaultPriceTWD: 187,
     priceSource: '台版對映日版 (M2a) 牌價換算'
+  },
+  'S12F_109': {
+    nameZh: '洛奇亞V (Lugia V)',
+    nameEn: 'Lugia V',
+    nameJa: 'ルギアV',
+    rarity: 'Super Rare (SR)',
+    category: 'Pokemon',
+    jpSet: 'S12',
+    jpCardNumber: '109',
+    imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/S12/042541_P_RUGIAV.jpg',
+    defaultPriceTWD: 830,
+    priceSource: '台版對映日版 (S12) 牌價換算'
   }
 };
 
@@ -311,7 +323,36 @@ function initDatabase() {
       '台版對映日版 (M2a) 牌價換算'
     ]);
 
-    // 7. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
+    // 7. 動態修復 #16 S12F 109 洛奇亞V SR (S12 042541_P_RUGIAV 官方原圖) 與報價
+    db.run(`
+      UPDATE cards 
+      SET image_url = ?,
+          raw_id = ?,
+          name_zh = ?,
+          name_en = ?,
+          name_ja = ?,
+          rarity = ?,
+          category = ?,
+          market_price_twd = ?,
+          original_price = ?,
+          original_currency = ?,
+          price_source = ?
+      WHERE raw_id LIKE '%S12%109%' OR id LIKE '%S12%109%'
+    `, [
+      'https://www.pokemon-card.com/assets/images/card_images/large/S12/042541_P_RUGIAV.jpg',
+      'S12F 109/098',
+      '洛奇亞V (Lugia V)',
+      'Lugia V',
+      'ルギアV',
+      'Super Rare (SR)',
+      'Pokemon',
+      830,
+      23.66,
+      'EUR',
+      '台版對映日版 (S12) 牌價換算'
+    ]);
+
+    // 8. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
     db.all('SELECT id, raw_id FROM cards', (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
@@ -643,10 +684,10 @@ async function fetchCardArtwork(language, setCode, cardNumber, cardNameJa, tcgde
               c.cardThumbFile && c.cardThumbFile.toLowerCase().includes(`/${jpSet.toLowerCase()}/`)
             );
             if (matchedList.length > 0) {
-              // 防呆過濾：優先比對卡名 (避免全文搜尋命中效果文提及該寶可夢的無關訓練家/道具卡)
+              // 防呆過濾：優先以嚴格形態比對卡名 (避免 V 與 VSTAR / VMAX 混淆，或全文搜尋命中無關卡)
               const nameMatched = matchedList.filter(c => {
                 const n = (c.cardNameViewText || c.cardNameAltText || '').trim();
-                return n.includes(cleanJa) || cleanJa.includes(n);
+                return matchCardName(cleanJa, n);
               });
               const pool = nameMatched.length > 0 ? nameMatched : matchedList;
 
@@ -681,8 +722,34 @@ async function fetchCardArtwork(language, setCode, cardNumber, cardNameJa, tcgde
   return 'https://assets.tcgdex.net/univ/cards/card-back/high.webp';
 }
 
+// 卡牌名稱精確形態比對器 (嚴防 V / VSTAR / VMAX / ex / GX 混淆)
+function matchCardName(targetName, candidateName) {
+  if (!targetName || !candidateName) return false;
+  const t = targetName.trim().toLowerCase();
+  const c = candidateName.trim().toLowerCase();
+  if (t === c) return true;
+
+  // 特殊形態後綴檢查 (V, VSTAR, VMAX, EX, GX)
+  const forms = ['vstar', 'vmax', 'ex', 'gx', 'v'];
+  const tForm = forms.find(f => t.endsWith(f));
+  const cForm = forms.find(f => c.endsWith(f));
+
+  // 若兩者皆有形態標籤但形態不一致 (例如 V vs VSTAR, ex vs GX)，直接排除
+  if (tForm || cForm) {
+    if (tForm !== cForm) return false;
+  }
+
+  return t.includes(c) || c.includes(t);
+}
+
 // 常用卡牌繁中 / 英文 / 日文多語系對照字典
 const CARD_NAME_TRANSLATIONS = {
+  'ルギアV': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
+  'Lugia V': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
+  '洛奇亞V': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
+  'ルギア': { zh: '洛奇亞 (Lugia)', en: 'Lugia', ja: 'ルギア' },
+  'Lugia': { zh: '洛奇亞 (Lugia)', en: 'Lugia', ja: 'ルギア' },
+  '洛奇亞': { zh: '洛奇亞 (Lugia)', en: 'Lugia', ja: 'ルギア' },
   'サーファー': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   'Surfer': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   '衝浪手': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
