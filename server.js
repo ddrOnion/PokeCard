@@ -39,6 +39,39 @@ const FOREX_RATES = {
   TWD: 1.0
 };
 
+// 台灣/亞洲特殊套牌與跨國卡牌對照庫 (Taiwan/Asia Regional Composite Sets & Promos)
+// 支援中文化初期特殊合輯編號 (如 AC / AS / SC) 與日美版對應
+const SPECIAL_CARD_REGISTRY = {
+  'AS6B_211': {
+    nameZh: '化石翼龍GX (Aerodactyl GX)',
+    nameEn: 'Aerodactyl GX',
+    nameJa: 'プテラGX',
+    rarity: 'Super Rare (SR)',
+    category: 'Pokemon',
+    jpSet: 'SM11',
+    jpCardNumber: '100',
+    enSet: 'sm11',
+    enCardNumber: '224',
+    imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/SM11/036980_P_PUTERAGX.jpg',
+    defaultPriceTWD: 249,
+    priceSource: '台版 (AS6b) 對映日版 SM11 / 美版 Unified Minds 牌價'
+  },
+  'S12AF_244': {
+    nameZh: '美蓉 (Melony)',
+    nameEn: 'Melony',
+    nameJa: 'メロン',
+    rarity: 'Special Art Rare (SAR)',
+    category: 'Trainer',
+    jpSet: 'S12a',
+    jpCardNumber: '244',
+    enSet: 'swsh12pt5',
+    enCardNumber: 'GG64',
+    imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/S12a/042894_T_MERON.jpg',
+    defaultPriceTWD: 303,
+    priceSource: '台版對映日版 (S12a) 牌價換算'
+  }
+};
+
 // 卡牌 ID 智慧正規化函數：消除有無空格差異 (例如 'M5F112/081' 與 'M5F 112/081'、'S8BF254/184' 與 'S8BF 254/184')
 function normalizeCardId(input) {
   if (!input || typeof input !== 'string') return null;
@@ -210,7 +243,34 @@ function initDatabase() {
       WHERE raw_id LIKE '%M2AF%226%' OR id LIKE '%M2AF%226%'
     `);
 
-    // 4. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
+    // 4. 動態修復 #14 AS6b 211 化石翼龍GX SR (SM11 / Miracle Twin 官方原圖) 與報價
+    db.run(`
+      UPDATE cards 
+      SET image_url = 'https://www.pokemon-card.com/assets/images/card_images/large/SM11/036980_P_PUTERAGX.jpg',
+          raw_id = 'AS6b 211/194',
+          set_code = 'AS6b',
+          name_zh = '化石翼龍GX (Aerodactyl GX)',
+          name_en = 'Aerodactyl GX',
+          name_ja = 'プテラGX',
+          rarity = 'Super Rare (SR)',
+          category = 'Pokemon',
+          market_price_twd = 249,
+          original_price = 7.72,
+          original_currency = 'USD',
+          price_source = '台版 (AS6b) 對映日版 SM11 / 美版 Unified Minds 牌價'
+      WHERE raw_id LIKE '%AS6%211%' OR id LIKE '%AS6%211%'
+    `);
+
+    // 5. 動態修復 #13 S12AF 244 美蓉 (Melony) 多語系名稱
+    db.run(`
+      UPDATE cards 
+      SET name_zh = '美蓉 (Melony)',
+          name_en = 'Melony',
+          name_ja = 'メロン'
+      WHERE raw_id LIKE '%S12A%244%' OR id LIKE '%S12A%244%'
+    `);
+
+    // 6. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
     db.all('SELECT id, raw_id FROM cards', (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
@@ -357,6 +417,51 @@ async function fetchOnlinePrice(language, setCode, cardNumber) {
   const padNum = cardNumber.padStart(3, '0');
   const cleanNum = cardNumber.replace(/^0+/, '') || '1';
 
+  // 0. 特殊套牌 / 區域合輯跨國牌價先驗映射 (如 AS6b 211, S12aF 244)
+  const specialKey = `${normSet}_${cleanNum}`;
+  const specialKeyPad = `${normSet}_${padNum}`;
+  const special = SPECIAL_CARD_REGISTRY[specialKey] || SPECIAL_CARD_REGISTRY[specialKeyPad];
+  if (special) {
+    if (special.enSet && special.enCardNumber) {
+      try {
+        const res = await fetch(`https://api.tcgdex.net/v2/en/cards/${special.enSet}-${special.enCardNumber}`, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const json = await res.json();
+          const tcgplayer = json?.pricing?.tcgplayer;
+          const cardmarket = json?.pricing?.cardmarket;
+          let priceUSD = tcgplayer?.holofoil?.marketPrice || tcgplayer?.normal?.marketPrice || 0;
+          if (priceUSD > 0) {
+            return {
+              priceTWD: Math.round(priceUSD * FOREX_RATES.USD),
+              originalPrice: priceUSD,
+              originalCurrency: 'USD',
+              source: special.priceSource || 'TCGdex (TCGplayer)',
+              meta: { ...json, ...special }
+            };
+          }
+          if (cardmarket?.trend) {
+            return {
+              priceTWD: Math.round(cardmarket.trend * FOREX_RATES.EUR),
+              originalPrice: cardmarket.trend,
+              originalCurrency: 'EUR',
+              source: special.priceSource || 'Cardmarket EUR',
+              meta: { ...json, ...special }
+            };
+          }
+        }
+      } catch (e) {
+        console.warn(`Special card price fetch failed for ${specialKey}:`, e.message);
+      }
+    }
+    return {
+      priceTWD: special.defaultPriceTWD || 150,
+      originalPrice: special.defaultPriceTWD || 150,
+      originalCurrency: 'TWD',
+      source: special.priceSource || '台版對映日美版估值',
+      meta: special
+    };
+  }
+
   if (language === 'EN') {
     // 英文版映射對照：SVI -> sv01
     let tcgdexSet = normSet.toLowerCase();
@@ -449,6 +554,16 @@ async function fetchOnlinePrice(language, setCode, cardNumber) {
 
 // 自動多級官方卡圖抓取引擎 (Multi-tier Official Card Artwork Ingestion)
 async function fetchCardArtwork(language, setCode, cardNumber, cardNameJa, tcgdexImage, capturedImageBase64, customId) {
+  // 0. 特殊套牌 / 區域合輯先驗原畫對映 (如 AS6b 211 化石翼龍GX SR)
+  const normSetUpper = (setCode || '').toUpperCase().trim();
+  const cleanCardNum = (cardNumber || '').replace(/^0+/, '');
+  const padCardNum = (cardNumber || '').padStart(3, '0');
+  const specialKey = `${normSetUpper}_${cleanCardNum}`;
+  const specialKeyPad = `${normSetUpper}_${padCardNum}`;
+  const special = SPECIAL_CARD_REGISTRY[specialKey] || SPECIAL_CARD_REGISTRY[specialKeyPad];
+  if (special && special.imageUrl) {
+    return special.imageUrl;
+  }
   // 1. 若前端拍照/上傳了實體卡片照片，優先保存至本地靜態目錄
   if (capturedImageBase64 && capturedImageBase64.startsWith('data:image')) {
     try {
@@ -523,6 +638,15 @@ const CARD_NAME_TRANSLATIONS = {
   'サーファー': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   'Surfer': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   '衝浪手': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
+  'プテラGX': { zh: '化石翼龍GX (Aerodactyl GX)', en: 'Aerodactyl GX', ja: 'プテラGX' },
+  'プテラ': { zh: '化石翼龍 (Aerodactyl)', en: 'Aerodactyl', ja: 'プテラ' },
+  '化石翼龍GX': { zh: '化石翼龍GX (Aerodactyl GX)', en: 'Aerodactyl GX', ja: 'プテラGX' },
+  '化石翼龍': { zh: '化石翼龍 (Aerodactyl)', en: 'Aerodactyl', ja: 'プテラ' },
+  'Aerodactyl GX': { zh: '化石翼龍GX (Aerodactyl GX)', en: 'Aerodactyl GX', ja: 'プテラGX' },
+  'Aerodactyl': { zh: '化石翼龍 (Aerodactyl)', en: 'Aerodactyl', ja: 'プテラ' },
+  'メロン': { zh: '美蓉 (Melony)', en: 'Melony', ja: 'メロン' },
+  'Melony': { zh: '美蓉 (Melony)', en: 'Melony', ja: 'メロン' },
+  '美蓉': { zh: '美蓉 (Melony)', en: 'Melony', ja: 'メロン' },
   'ハピナスV': { zh: '幸福蛋V (Blissey V)', en: 'Blissey V', ja: 'ハピナスV' },
   'ハピナス': { zh: '幸福蛋 (Blissey)', en: 'Blissey', ja: 'ハピナス' },
   'Blissey V': { zh: '幸福蛋V (Blissey V)', en: 'Blissey V', ja: 'ハピナスV' },
@@ -532,10 +656,9 @@ const CARD_NAME_TRANSLATIONS = {
   'Mega Gardevoir ex': { zh: '超級沙奈朵ex (Mega Gardevoir ex)', en: 'Mega Gardevoir ex', ja: 'メガサーナイトex' },
   'サーナイト': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
   'Gardevoir': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
-  'メガゼ拉オラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
   'メガゼラオラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
   'Mega Zeraora ex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
-  'ゼラオラ': { zh: '捷拉奧拉 (Zeraora)', en: 'Zeraora', ja: 'ゼラオラ' },
+  'ゼラオラ': { zh: '捷拉奧拉 (Zeraora)', en: 'Zeraora', ja: 'ゼ拉オラ' },
   'レシラムV': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
   'Reshiram V': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
   'レシラム': { zh: '萊希拉姆 (Reshiram)', en: 'Reshiram', ja: 'レシラム' },
@@ -709,23 +832,27 @@ app.post('/api/cards', async (req, res) => {
     const onlineData = await fetchOnlinePrice(language, setCode, cardNumber);
     const meta = onlineData?.meta;
 
-    let nameZh = meta?.name;
+    const specialKey = `${setCode.toUpperCase()}_${cardNumber.replace(/^0+/, '')}`;
+    const specialKeyPad = `${setCode.toUpperCase()}_${cardNumber.padStart(3, '0')}`;
+    const special = SPECIAL_CARD_REGISTRY[specialKey] || SPECIAL_CARD_REGISTRY[specialKeyPad];
+
+    let nameZh = special?.nameZh || meta?.name;
     if (meta?.dexId && meta.dexId[0] && POKEDEX_ZH[meta.dexId[0]]) {
       nameZh = `${POKEDEX_ZH[meta.dexId[0]]} (${meta.name})`;
     } else if (!nameZh) {
       nameZh = `寶可夢卡片 (${setCode} #${cardNumber})`;
     }
 
-    let nameEn = meta?.name || `${setCode} #${cardNumber}`;
-    let nameJa = meta?.name || `${setCode} #${cardNumber}`;
+    let nameEn = special?.nameEn || meta?.name || `${setCode} #${cardNumber}`;
+    let nameJa = special?.nameJa || meta?.name || `${setCode} #${cardNumber}`;
 
     const resolvedNames = resolveCardNames(nameZh, nameEn, nameJa);
     nameZh = resolvedNames.zh;
     nameEn = resolvedNames.en;
     nameJa = resolvedNames.ja;
 
-    const rarity = meta?.rarity || 'Regular';
-    const category = meta?.category || 'Pokemon';
+    const rarity = special?.rarity || meta?.rarity || 'Regular';
+    const category = special?.category || meta?.category || 'Pokemon';
     // 自動多級拉圖引擎 (Multi-Tier Auto Image Fetching Engine)
     const imageUrl = await fetchCardArtwork(language, setCode, cardNumber, nameJa, meta?.image, req.body.capturedImage, customId);
     const marketPrice = onlineData?.priceTWD || 50;
