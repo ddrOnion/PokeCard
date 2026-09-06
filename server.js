@@ -93,6 +93,20 @@ const SPECIAL_CARD_REGISTRY = {
     imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/S12/042541_P_RUGIAV.jpg',
     defaultPriceTWD: 830,
     priceSource: '台版對映日版 (S12) 牌價換算'
+  },
+  'S8AF_1': {
+    nameZh: '皮卡丘 (Pikachu)',
+    nameEn: 'Pikachu',
+    nameJa: 'ピカチュウ',
+    rarity: 'Common / Mirror (Holo)',
+    category: 'Pokemon',
+    jpSet: 'S8a',
+    jpCardNumber: '001',
+    enSet: 'cel25',
+    enCardNumber: '5',
+    imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/S8a/040066_P_PIKACHIXYUU.jpg',
+    defaultPriceTWD: 160,
+    priceSource: '台版 (S8aF) 對映 25th Anniversary Collection / Celebrations'
   }
 };
 
@@ -352,7 +366,36 @@ function initDatabase() {
       '台版對映日版 (S12) 牌價換算'
     ]);
 
-    // 8. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
+    // 8. 動態修復 #17 S8aF 001 皮卡丘 25週年 (S8a 040066_P_PIKACHIXYUU 官方原圖) 與報價
+    db.run(`
+      UPDATE cards 
+      SET image_url = ?,
+          raw_id = ?,
+          name_zh = ?,
+          name_en = ?,
+          name_ja = ?,
+          rarity = ?,
+          category = ?,
+          market_price_twd = ?,
+          original_price = ?,
+          original_currency = ?,
+          price_source = ?
+      WHERE raw_id LIKE '%S8A%001%' OR raw_id LIKE '%S8a%001%' OR id LIKE '%S8A%001%' OR id LIKE '%S8A%1%'
+    `, [
+      'https://www.pokemon-card.com/assets/images/card_images/large/S8a/040066_P_PIKACHIXYUU.jpg',
+      'S8aF 001/028',
+      '皮卡丘 (Pikachu)',
+      'Pikachu',
+      'ピカチュウ',
+      'Common / Mirror (Holo)',
+      'Pokemon',
+      160,
+      4.54,
+      'EUR',
+      '台版 (S8aF) 對映 25th Anniversary Collection / Celebrations'
+    ]);
+
+    // 9. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
     db.all('SELECT id, raw_id FROM cards', (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
@@ -744,6 +787,9 @@ function matchCardName(targetName, candidateName) {
 
 // 常用卡牌繁中 / 英文 / 日文多語系對照字典
 const CARD_NAME_TRANSLATIONS = {
+  'ピカチュウ': { zh: '皮卡丘 (Pikachu)', en: 'Pikachu', ja: 'ピカチュウ' },
+  'Pikachu': { zh: '皮卡丘 (Pikachu)', en: 'Pikachu', ja: 'ピカチュウ' },
+  '皮卡丘': { zh: '皮卡丘 (Pikachu)', en: 'Pikachu', ja: 'ピカチュウ' },
   'ルギアV': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
   'Lugia V': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
   '洛奇亞V': { zh: '洛奇亞V (Lugia V)', en: 'Lugia V', ja: 'ルギアV' },
@@ -916,7 +962,7 @@ app.get('/api/cards', (req, res) => {
 // 2. 新增卡片
 app.post('/api/cards', async (req, res) => {
   try {
-    const { rawId, language, buyPriceTWD } = req.body;
+    const { rawId, language, buyPriceTWD, cardName } = req.body;
     if (!rawId || !language) {
       return res.status(400).json({ error: 'rawId and language are required' });
     }
@@ -957,15 +1003,17 @@ app.post('/api/cards', async (req, res) => {
     const specialKeyPad = `${setCode.toUpperCase()}_${cardNumber.padStart(3, '0')}`;
     const special = SPECIAL_CARD_REGISTRY[specialKey] || SPECIAL_CARD_REGISTRY[specialKeyPad];
 
-    let nameZh = special?.nameZh || meta?.name;
+    // 若使用者主動指定了卡名 (例如 '皮卡丘'、'ルギアV')，或特殊註冊庫有記錄，優先採用
+    const userOrRegistryName = cardName?.trim() || special?.nameZh || special?.nameJa;
+    let nameZh = special?.nameZh || (userOrRegistryName ? userOrRegistryName : meta?.name);
     if (meta?.dexId && meta.dexId[0] && POKEDEX_ZH[meta.dexId[0]]) {
       nameZh = `${POKEDEX_ZH[meta.dexId[0]]} (${meta.name})`;
     } else if (!nameZh) {
       nameZh = `寶可夢卡片 (${setCode} #${cardNumber})`;
     }
 
-    let nameEn = special?.nameEn || meta?.name || `${setCode} #${cardNumber}`;
-    let nameJa = special?.nameJa || meta?.name || `${setCode} #${cardNumber}`;
+    let nameEn = special?.nameEn || (cardName ? cardName.trim() : (meta?.name || `${setCode} #${cardNumber}`));
+    let nameJa = special?.nameJa || (cardName ? cardName.trim() : (meta?.name || `${setCode} #${cardNumber}`));
 
     const resolvedNames = resolveCardNames(nameZh, nameEn, nameJa);
     nameZh = resolvedNames.zh;

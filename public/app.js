@@ -44,6 +44,7 @@ const addCardForm = document.getElementById('addCardForm');
 const inputLang = document.getElementById('inputLang');
 const inputRawId = document.getElementById('inputRawId');
 const inputBuyPrice = document.getElementById('inputBuyPrice');
+const inputCardName = document.getElementById('inputCardName');
 
 // Scan elements
 const scanFileInput = document.getElementById('scanFileInput');
@@ -373,7 +374,8 @@ function setupEventListeners() {
         body: JSON.stringify({
           rawId: finalRawId,
           language: inputLang.value,
-          buyPriceTWD: inputBuyPrice.value || 0
+          buyPriceTWD: inputBuyPrice.value || 0,
+          cardName: inputCardName?.value?.trim() || ''
         })
       });
       if (res.ok) {
