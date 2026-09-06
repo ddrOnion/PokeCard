@@ -40,7 +40,7 @@
 - 支援使用手機相機即時拍照或本地上傳卡牌實體品相照片。
 
 ### 5. 📱 跨裝置 Local Wi-Fi 連線支援
-- 自動偵測本機實體 Wi-Fi IPv4 位址（如 `http://192.168.x.x:3000`）。
+- 自動偵測本機實體 Wi-Fi IPv4 位址（如 `http://192.168.x.x:3080`）。
 - 頂部狀態列提供快捷 Wi-Fi Badge，點擊即可複製手機連線網址。
 - 隨附 `allow-wifi-access.bat` 一鍵配置 Windows 防火牆規則。
 
@@ -68,16 +68,16 @@ npm install
 ```bash
 npm start
 ```
-伺服器啟動後將監聽 `0.0.0.0:3000`：
-- 本機訪問：`http://localhost:3000`
-- 同區網手機/平板訪問：`http://<您的本機區域IP>:3000`
+伺服器啟動後將監聽 `0.0.0.0:3080`：
+- 本機訪問：`http://localhost:3080`
+- 同區網手機/平板訪問：`http://<您的本機區域IP>:3080`
 
 ### 3. 手機連線防火牆設定（Windows 使用者）
-若手機無法存取 `http://<區域IP>:3000`，請在專案目錄下右鍵以「系統管理員身分執行」：
+若手機無法存取 `http://<區域IP>:3080`，請在專案目錄下右鍵以「系統管理員身分執行」：
 ```cmd
 allow-wifi-access.bat
 ```
-該批次檔會自動在 Windows Defender 防火牆新增 Port 3000 入站允許規則。
+該批次檔會自動在 Windows Defender 防火牆新增 Port 3080 入站允許規則。
 
 ---
 
@@ -85,7 +85,7 @@ allow-wifi-access.bat
 
 ```text
 PokeCard/
-├── allow-wifi-access.bat   # Windows 防火牆 Port 3000 自動開放腳本
+├── allow-wifi-access.bat   # Windows 防火牆 Port 3080 自動開放腳本
 ├── package.json            # 專案設定與相依套件
 ├── server.js               # Express 5 後端核心、SQLite 資料庫管理與爬蟲邏輯
 ├── pokecard.db             # SQLite 輕量化卡牌資料庫

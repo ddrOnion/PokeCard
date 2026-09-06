@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3080;
 const HOST = '0.0.0.0';
 const DB_PATH = path.join(__dirname, 'pokecard.db');
 
