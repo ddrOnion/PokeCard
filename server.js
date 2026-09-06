@@ -69,6 +69,18 @@ const SPECIAL_CARD_REGISTRY = {
     imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/S12a/042894_T_MERON.jpg',
     defaultPriceTWD: 303,
     priceSource: '台版對映日版 (S12a) 牌價換算'
+  },
+  'M2AF_210': {
+    nameZh: 'N的捷克羅姆 (N\'s Zekrom)',
+    nameEn: 'N\'s Zekrom',
+    nameJa: 'Nのゼクロム',
+    rarity: 'Illustration Rare (AR)',
+    category: 'Pokemon',
+    jpSet: 'M2a',
+    jpCardNumber: '210',
+    imageUrl: 'https://www.pokemon-card.com/assets/images/card_images/large/M2a/049970_P_NNOZEKUROMU.jpg',
+    defaultPriceTWD: 187,
+    priceSource: '台版對映日版 (M2a) 牌價換算'
   }
 };
 
@@ -270,7 +282,36 @@ function initDatabase() {
       WHERE raw_id LIKE '%S12A%244%' OR id LIKE '%S12A%244%'
     `);
 
-    // 6. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
+    // 6. 動態修復 #15 M2AF 210 N的捷克羅姆 AR (M2a 049970_P_NNOZEKUROMU 官方原圖) 與報價
+    db.run(`
+      UPDATE cards 
+      SET image_url = ?,
+          raw_id = ?,
+          name_zh = ?,
+          name_en = ?,
+          name_ja = ?,
+          rarity = ?,
+          category = ?,
+          market_price_twd = ?,
+          original_price = ?,
+          original_currency = ?,
+          price_source = ?
+      WHERE raw_id LIKE '%M2AF%210%' OR id LIKE '%M2AF%210%'
+    `, [
+      'https://www.pokemon-card.com/assets/images/card_images/large/M2a/049970_P_NNOZEKUROMU.jpg',
+      'M2AF 210/193',
+      "N的捷克羅姆 (N's Zekrom)",
+      "N's Zekrom",
+      'Nのゼクロム',
+      'Illustration Rare (AR)',
+      'Pokemon',
+      187,
+      5.34,
+      'EUR',
+      '台版對映日版 (M2a) 牌價換算'
+    ]);
+
+    // 7. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
     db.all('SELECT id, raw_id FROM cards', (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
@@ -602,8 +643,15 @@ async function fetchCardArtwork(language, setCode, cardNumber, cardNameJa, tcgde
               c.cardThumbFile && c.cardThumbFile.toLowerCase().includes(`/${jpSet.toLowerCase()}/`)
             );
             if (matchedList.length > 0) {
+              // 防呆過濾：優先比對卡名 (避免全文搜尋命中效果文提及該寶可夢的無關訓練家/道具卡)
+              const nameMatched = matchedList.filter(c => {
+                const n = (c.cardNameViewText || c.cardNameAltText || '').trim();
+                return n.includes(cleanJa) || cleanJa.includes(n);
+              });
+              const pool = nameMatched.length > 0 ? nameMatched : matchedList;
+
               // 若卡號是秘卡/全圖 (通常卡號大於普通卡總數)，排在擴充包後段 (AR/SR/SAR/CSR 特畫)
-              const chosen = matchedList.length > 1 ? matchedList[matchedList.length - 1] : matchedList[0];
+              const chosen = pool.length > 1 ? pool[pool.length - 1] : pool[0];
               const fullOfficialUrl = `https://www.pokemon-card.com${chosen.cardThumbFile}`;
               console.log(`Auto-scraped official JP image for ${setCode} #${cardNumber}: ${fullOfficialUrl}`);
               return fullOfficialUrl;
@@ -656,9 +704,15 @@ const CARD_NAME_TRANSLATIONS = {
   'Mega Gardevoir ex': { zh: '超級沙奈朵ex (Mega Gardevoir ex)', en: 'Mega Gardevoir ex', ja: 'メガサーナイトex' },
   'サーナイト': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
   'Gardevoir': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
-  'メガゼラオラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
+  'メガゼラオラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオ拉ex' },
   'Mega Zeraora ex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
-  'ゼラオラ': { zh: '捷拉奧拉 (Zeraora)', en: 'Zeraora', ja: 'ゼ拉オラ' },
+  'ゼラオラ': { zh: '捷拉奧拉 (Zeraora)', en: 'Zeraora', ja: 'ゼラオラ' },
+  'Nのゼクロム': { zh: 'N的捷克羅姆 (N\'s Zekrom)', en: 'N\'s Zekrom', ja: 'Nのゼクロム' },
+  'N\'s Zekrom': { zh: 'N的捷克羅姆 (N\'s Zekrom)', en: 'N\'s Zekrom', ja: 'Nのゼクロム' },
+  'N的捷克羅姆': { zh: 'N的捷克羅姆 (N\'s Zekrom)', en: 'N\'s Zekrom', ja: 'Nのゼクロム' },
+  'ゼクロム': { zh: '捷克羅姆 (Zekrom)', en: 'Zekrom', ja: 'ゼクロム' },
+  'Zekrom': { zh: '捷克羅姆 (Zekrom)', en: 'Zekrom', ja: 'ゼクロム' },
+  '捷克羅姆': { zh: '捷克羅姆 (Zekrom)', en: 'Zekrom', ja: 'ゼクロム' },
   'レシラムV': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
   'Reshiram V': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
   'レシラム': { zh: '萊希拉姆 (Reshiram)', en: 'Reshiram', ja: 'レシラム' },
