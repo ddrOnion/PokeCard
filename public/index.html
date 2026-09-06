@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardVault - PTCG 寶可夢卡牌資產管理系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-background">
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+    <div class="glow-orb orb-3"></div>
+  </div>
+
+  <div class="container">
+    <!-- 頂部 Header -->
+    <header class="main-header">
+      <div class="logo-area">
+        <div class="logo-icon">
+          <span class="pokeball-inner"></span>
+        </div>
+        <div>
+          <h1 class="logo-text">CardVault <span class="badge-pro">PRO</span></h1>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px;">
+            <p class="logo-sub">跨語系 PTCG 資產估值與收藏中台 (台版 · 日版 · 美版)</p>
+            <div class="wifi-pill-badge" id="wifiPillBadge" title="點擊複製 WiFi 區網連線網址（手機可直接開啟）" style="display: none;">
+              <span class="wifi-dot">●</span>
+              <span class="wifi-label">WiFi 區網:</span>
+              <code id="wifiUrlText">--</code>
+              <span class="copy-hint" title="點擊複製">📋</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btnSyncPrices" class="btn btn-secondary">
+          <span class="icon">🔄</span> <span class="btn-text">聯網同步市價</span>
+        </button>
+        <button id="btnOpenScanModal" class="btn btn-primary-gradient">
+          <span class="icon">📷</span> 拍照 / 圖片辨識
+        </button>
+        <button id="btnOpenAddModal" class="btn btn-primary">
+          <span class="icon">＋</span> 輸入卡片 ID
+        </button>
+      </div>
+    </header>
+
+    <!-- 投資組合總覽看板 (Portfolio KPI Cards) -->
+    <section class="dashboard-stats">
+      <!-- 總估值 -->
+      <div class="stat-card glass-panel stat-highlight">
+        <div class="stat-header">
+          <span class="stat-label">收藏總現值 (Total Portfolio Value)</span>
+          <span class="stat-tag tag-live">● 即時匯率</span>
+        </div>
+        <div class="stat-value-group">
+          <span class="currency-symbol">NT$</span>
+          <span id="totalValue" class="stat-number">0</span>
+        </div>
+        <div class="stat-footer">
+          <span class="stat-sub-label">投入成本：NT$ <span id="totalCost">0</span></span>
+          <span id="totalPnLBadge" class="pnl-badge pnl-positive">+0.0%</span>
+        </div>
+      </div>
+
+      <!-- 總收藏張數 -->
+      <div class="stat-card glass-panel">
+        <div class="stat-header">
+          <span class="stat-label">收藏總數 (Total Cards)</span>
+          <span class="stat-icon">🎴</span>
+        </div>
+        <div class="stat-value-group">
+          <span id="totalCardCount" class="stat-number">0</span>
+          <span class="stat-unit">張</span>
+        </div>
+        <div class="stat-breakdown">
+          <span class="badge badge-tc">🇹🇼 台版 <b id="countTC">0</b></span>
+          <span class="badge badge-jp">🇯🇵 日版 <b id="countJP">0</b></span>
+          <span class="badge badge-en">🇺🇸 美版 <b id="countEN">0</b></span>
+        </div>
+      </div>
+
+      <!-- 未實現浮動損益 -->
+      <div class="stat-card glass-panel">
+        <div class="stat-header">
+          <span class="stat-label">未實現浮動損益 (Unrealized PnL)</span>
+          <span class="stat-icon">📈</span>
+        </div>
+        <div class="stat-value-group">
+          <span class="currency-symbol">NT$</span>
+          <span id="totalPnLAmount" class="stat-number">0</span>
+        </div>
+        <div class="stat-footer">
+          <span class="forex-rates">
+            USD: <b id="fxUsd">32.25</b> | JPY: <b id="fxJpy">0.215</b> | EUR: <b id="fxEur">35.10</b>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 收藏列表控制欄 (Filter, Search & View Toggle) -->
+    <div class="control-bar glass-panel">
+      <div class="filter-tabs" id="langTabs">
+        <button class="tab-btn active" data-lang="ALL">全部語系 (ALL)</button>
+        <button class="tab-btn" data-lang="TC">🇹🇼 台版 (TC)</button>
+        <button class="tab-btn" data-lang="JP">🇯🇵 日版 (JP)</button>
+        <button class="tab-btn" data-lang="EN">🇺🇸 美版 (EN)</button>
+      </div>
+
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="搜尋卡名、卡號 (如 SV11WF 139、M2 083、SVI 242)...">
+      </div>
+
+      <!-- 卡名顯示語言切換 (Display Title Language: Auto / TC / EN / JP) -->
+      <div class="title-lang-selector" id="titleLangSelector" title="切換卡牌名稱優先顯示語系">
+        <span class="selector-label">卡名：</span>
+        <div class="lang-pill-buttons" id="titleLangTabs">
+          <button class="lang-pill-btn active" data-title-lang="auto" title="依發行版本顯示 (台版繁中、日版日文、美版英文)">🌐 依版本</button>
+          <button class="lang-pill-btn" data-title-lang="zh" title="一律優先顯示繁體中文 (台版譯名)">🇹🇼 台</button>
+          <button class="lang-pill-btn" data-title-lang="en" title="一律優先顯示英文名稱 (美版)">🇺🇸 英</button>
+          <button class="lang-pill-btn" data-title-lang="ja" title="一律優先顯示日文名稱 (日版)">🇯🇵 日</button>
+        </div>
+      </div>
+
+      <div class="view-mode-toggle" id="viewModeToggle">
+        <button class="view-btn active" id="btnViewDetailed" data-view="detailed" title="詳細卡片模式 (含完整財務、損益指標與卡片資訊)">
+          <span class="icon">📇</span> <span class="label">詳細卡片</span>
+        </button>
+        <button class="view-btn" id="btnViewOverview" data-view="overview" title="卡冊一覽模式 (九宮格縮圖，支援拖曳任意排定卡牌順序)">
+          <span class="icon">🎴</span> <span class="label">卡冊一覽與排序</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 卡冊一覽專用工具列 (Overview Reorder Toolbar) -->
+    <div class="overview-toolbar glass-panel" id="overviewToolbar" style="display: none;">
+      <div class="reorder-info">
+        <span class="reorder-badge">✨ 拖曳排序模式</span>
+        <span class="reorder-hint">按住卡片或把手 <b>⠿</b> 即可直接拖曳改變卡牌排列順序，放開後自動同步儲存至資料庫</span>
+      </div>
+      <div class="quick-sort-actions">
+        <span class="quick-sort-label">快速重排輔助：</span>
+        <button class="btn-sort-chip" data-sort="price-desc" title="依當前市價由高至低重排">💰 市價高至低</button>
+        <button class="btn-sort-chip" data-sort="price-asc" title="依當前市價由低至高重排">📉 市價低至高</button>
+        <button class="btn-sort-chip" data-sort="rawid-asc" title="依卡號代碼系列編號重排">🔢 依卡號排序</button>
+        <button class="btn-sort-chip" data-sort="cost-desc" title="依入手成本重排">🏷️ 依成本高低</button>
+      </div>
+    </div>
+
+    <!-- 浮動 Toast 通知 -->
+    <div id="toastNotification" class="toast-notification" aria-live="polite"></div>
+
+    <!-- 卡牌陳列區 (Card Showcase Grid) -->
+    <main class="cards-grid-container" id="cardsGrid">
+      <!-- 動態載入卡片 -->
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>載入卡片資產與即時報價中...</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal 1: 手動輸入卡號入庫 -->
+  <div class="modal-overlay" id="addCardModal">
+    <div class="modal-window glass-panel">
+      <div class="modal-header">
+        <h3>➕ 手動輸入卡片 ID 入庫</h3>
+        <button class="modal-close" id="btnCloseAddModal">&times;</button>
+      </div>
+      <form id="addCardForm" class="modal-body">
+        <div class="form-group">
+          <label for="inputLang">卡片發行語系 (Language)</label>
+          <select id="inputLang" required>
+            <option value="TC">🇹🇼 台版 (Traditional Chinese)</option>
+            <option value="JP">🇯🇵 日版 (Japanese)</option>
+            <option value="EN">🇺🇸 美版 / 英文版 (English)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="inputRawId">卡片 ID / 番號代碼 (Set Code & Card ID)</label>
+          <input type="text" id="inputRawId" placeholder="例如: SV11WF 139/086 或 M2 083/080 或 SVI 242/198" required>
+          <small class="helper-text">格式支援：[系列代號] [卡號]/[總號]，例如：SV11WF 139/086</small>
+        </div>
+
+        <div class="form-group">
+          <label for="inputBuyPrice">入手價格 / 購入成本 (TWD)</label>
+          <input type="number" id="inputBuyPrice" placeholder="0" min="0" step="1">
+        </div>
+
+        <div class="quick-examples">
+          <span>快速測試填入：</span>
+          <button type="button" class="btn-chip" onclick="setQuickCard('TC', 'SV11WF 139/086', 100)">台版 灰塵山 (SV11WF 139/086)</button>
+          <button type="button" class="btn-chip" onclick="setQuickCard('JP', 'M2 083/080', 35)">日版 炭小侍 (M2 083/080)</button>
+          <button type="button" class="btn-chip" onclick="setQuickCard('EN', 'SVI 242/198', 45)">美版 天星隊手下 (SVI 242/198)</button>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btnCancelAdd">取消</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitAdd">確認並聯網拉取報價入庫</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: 拍照 / 圖片辨識掃描入庫 -->
+  <div class="modal-overlay" id="scanModal">
+    <div class="modal-window glass-panel modal-wide">
+      <div class="modal-header">
+        <h3>📷 拍照 / 圖片辨識掃描入庫 (Vision OCR)</h3>
+        <button class="modal-close" id="btnCloseScanModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="scanner-workflow">
+          <!-- 上傳或鏡頭預覽區域 -->
+          <div class="scan-preview-zone">
+            <div class="drop-zone" id="dropZone">
+              <div class="drop-zone-content">
+                <span class="upload-icon">📸</span>
+                <p>點擊上傳卡片照片 或 拖曳卡面影像至此</p>
+                <span class="hint-text">系統將自動進行卡片邊界對齊、透視校正與底部代號 OCR 抽取</span>
+                <input type="file" id="scanFileInput" accept="image/*" style="display:none">
+                <button type="button" class="btn btn-secondary mt-3" onclick="document.getElementById('scanFileInput').click()">
+                  選擇本地卡片照片
+                </button>
+              </div>
+              <div id="imagePreviewContainer" style="display:none; position:relative;">
+                <img id="scannedImagePreview" alt="Card Preview">
+                <div class="ocr-bounding-box" id="ocrBox"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 辨識結果與編輯確認 -->
+          <div class="scan-result-panel">
+            <h4 class="section-title">智能辨識解析結果 (Extracted Token)</h4>
+            
+            <div id="scanStatus" class="scan-status-alert">
+              請上傳卡片影像進行文字與卡號抽取
+            </div>
+
+            <div class="form-group mt-3">
+              <label>偵測到的卡片語系</label>
+              <select id="scanDetectedLang">
+                <option value="TC">🇹🇼 台版 (Traditional Chinese)</option>
+                <option value="JP">🇯🇵 日版 (Japanese)</option>
+                <option value="EN">🇺🇸 美版 (English)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>識別抽取之卡號 ID</label>
+              <input type="text" id="scanDetectedId" placeholder="等待辨識抽取...">
+            </div>
+
+            <div class="form-group">
+              <label>入手成本 (TWD)</label>
+              <input type="number" id="scanBuyPrice" value="0">
+            </div>
+
+            <button type="button" id="btnConfirmScanAdd" class="btn btn-primary-gradient w-100" disabled>
+              ✨ 確認資料無誤，聯網取價並收入卡冊
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
