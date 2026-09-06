@@ -39,6 +39,85 @@ const FOREX_RATES = {
   TWD: 1.0
 };
 
+// 卡牌 ID 智慧正規化函數：消除有無空格差異 (例如 'M5F112/081' 與 'M5F 112/081'、'S8BF254/184' 與 'S8BF 254/184')
+function normalizeCardId(input) {
+  if (!input || typeof input !== 'string') return null;
+  let raw = input.trim();
+  
+  // 處理斜線前後可能存在的零星空格: 'M5F 112 / 081' -> 'M5F 112/081'
+  raw = raw.replace(/\s*\/\s*/, '/');
+  
+  // 情況 1: 已有空格分隔 'SET_CODE NUM' 或 'SET_CODE NUM/TOTAL'
+  // 例如 'SV11WF 139/086', 'M2 083/080', '151 199/165', 'M1LF 065/063'
+  const spaceMatch = raw.match(/^([A-Za-z0-9\.\-]+)\s+([0-9]+)(?:\/([0-9]+))?$/);
+  if (spaceMatch) {
+    const setCode = spaceMatch[1].toUpperCase();
+    const cardNumber = spaceMatch[2];
+    const totalNumber = spaceMatch[3] || '';
+    const formatted = `${setCode} ${cardNumber}${totalNumber ? '/' + totalNumber : ''}`;
+    return { setCode, cardNumber, totalNumber, formatted };
+  }
+  
+  // 情況 2: 無空格但有斜線，例如 'M5F112/081', 'M2AF226/193', 'S8BF254/184', 'SVI242/198', 'M2083/080'
+  const slashMatch = raw.match(/^(.+)\/([0-9]+)$/);
+  if (slashMatch) {
+    const beforeSlash = slashMatch[1].trim();
+    const totalNumber = slashMatch[2].trim();
+    
+    // 拆分 beforeSlash 為 setCode 與 cardNumber
+    const letterNumMatch = beforeSlash.match(/^([A-Za-z0-9]*[A-Za-z])([0-9]+)$/);
+    if (letterNumMatch) {
+      const letterPart = letterNumMatch[1].toUpperCase();
+      const numPart = letterNumMatch[2];
+
+      // 若數字部分長度超過3 (例如 M2083 -> letterPart: 'M', numPart: '2083')
+      // PTCG 常規卡號為 3 位數 (083)，前置數字為擴充包代號 (2 -> M2)
+      if (numPart.length > 3) {
+        const cardDigits = Math.min(Math.max(totalNumber.length, 3), numPart.length - 1);
+        const cardNumber = numPart.slice(-cardDigits);
+        const setCode = letterPart + numPart.slice(0, -cardDigits);
+        const formatted = `${setCode} ${cardNumber}/${totalNumber}`;
+        return { setCode, cardNumber, totalNumber, formatted };
+      }
+
+      const setCode = letterPart;
+      const cardNumber = numPart;
+      const formatted = `${setCode} ${cardNumber}/${totalNumber}`;
+      return { setCode, cardNumber, totalNumber, formatted };
+    }
+  }
+  
+  // 情況 3: 無空格無斜線，例如 'M5F112', 'S8BF254', 'SVI242', 'M2083'
+  const compactMatch = raw.match(/^([A-Za-z0-9]*[A-Za-z])([0-9]+)$/);
+  if (compactMatch) {
+    const letterPart = compactMatch[1].toUpperCase();
+    const numPart = compactMatch[2];
+    if (numPart.length > 3) {
+      const cardNumber = numPart.slice(-3);
+      const setCode = letterPart + numPart.slice(0, -3);
+      const formatted = `${setCode} ${cardNumber}`;
+      return { setCode, cardNumber, totalNumber: '', formatted };
+    }
+    const setCode = letterPart;
+    const cardNumber = numPart;
+    const formatted = `${setCode} ${cardNumber}`;
+    return { setCode, cardNumber, totalNumber: '', formatted };
+  }
+
+  // 兜底純數字
+  const numOnly = raw.match(/^([0-9]+)(?:\/([0-9]+))?$/);
+  if (numOnly) {
+    return {
+      setCode: 'CARD',
+      cardNumber: numOnly[1],
+      totalNumber: numOnly[2] || '',
+      formatted: `CARD ${numOnly[1]}${numOnly[2] ? '/' + numOnly[2] : ''}`
+    };
+  }
+  
+  return null;
+}
+
 // 初始化資料庫
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) {
@@ -95,7 +174,7 @@ function initDatabase() {
       )
     `);
 
-    // 動態修復資料庫內既有卡片之卡圖與多語系名稱 (例如 M2AF 249 衝浪手 SAR 官方原圖)
+    // 1. 動態修復 M2AF 249 衝浪手 SAR 官方原圖與多語系
     db.run(`
       UPDATE cards 
       SET image_url = 'https://www.pokemon-card.com/assets/images/card_images/large/M2a/050009_T_SAFUA.jpg',
@@ -105,7 +184,49 @@ function initDatabase() {
       WHERE raw_id LIKE '%M2AF%249%' OR raw_id LIKE '%M2a%249%'
     `);
 
-    // 補齊全庫卡片繁中/英文/日文名稱欄位
+    // 2. 動態修復 #12 S8BF 254 幸福蛋V CSR (VMAX Climax You Iribi 官方原圖) 與報價
+    db.run(`
+      UPDATE cards 
+      SET image_url = 'https://www.pokemon-card.com/assets/images/card_images/large/S8b/041082_P_HAPINASUV.jpg',
+          raw_id = 'S8BF 254/184',
+          name_zh = '幸福蛋V (Blissey V)',
+          name_en = 'Blissey V',
+          name_ja = 'ハピナスV',
+          rarity = 'Character Super Rare (CSR)',
+          category = 'Pokemon',
+          market_price_twd = 503,
+          original_price = 14.33,
+          original_currency = 'EUR',
+          price_source = '台版對映日版 (S8b) 牌價換算'
+      WHERE raw_id LIKE '%S8B%254%' OR id LIKE '%S8B%254%'
+    `);
+
+    // 3. 動態修復 #11 M2AF 226 超級沙奈朵ex 多語系名稱
+    db.run(`
+      UPDATE cards 
+      SET name_zh = '超級沙奈朵ex (Mega Gardevoir ex)',
+          name_en = 'Mega Gardevoir ex',
+          name_ja = 'メガサーナイトex'
+      WHERE raw_id LIKE '%M2AF%226%' OR id LIKE '%M2AF%226%'
+    `);
+
+    // 4. 資料庫內所有卡片 ID 格式自動正規化 (消除空格與無空格差異)
+    db.all('SELECT id, raw_id FROM cards', (err, rows) => {
+      if (!err && rows) {
+        rows.forEach(r => {
+          const norm = normalizeCardId(r.raw_id);
+          if (norm && norm.formatted !== r.raw_id) {
+            db.run(
+              'UPDATE cards SET raw_id = ?, set_code = ?, card_number = ?, total_number = ? WHERE id = ?',
+              [norm.formatted, norm.setCode, norm.cardNumber, norm.totalNumber, r.id]
+            );
+            console.log(`Auto-normalized card raw_id: '${r.raw_id}' -> '${norm.formatted}'`);
+          }
+        });
+      }
+    });
+
+    // 5. 補齊全庫卡片繁中/英文/日文名稱欄位
     db.all('SELECT id, name_zh, name_en, name_ja FROM cards', (err, rows) => {
       if (!err && rows) {
         rows.forEach(r => {
@@ -355,18 +476,18 @@ async function fetchCardArtwork(language, setCode, cardNumber, cardNameJa, tcgde
     if (cardNameJa && cardNameJa !== `${setCode} #${cardNumber}`) {
       try {
         const cleanJa = cardNameJa.split(' ')[0].trim();
-        // 使用 keyword 參數以同時支援寶可夢 (Pokemon) 與訓練家/道具卡 (Trainer/Item)
-        const officialUrl = `https://www.pokemon-card.com/card-search/resultAPI.php?keyword=${encodeURIComponent(cleanJa)}&sm_and_keyword=true`;
+        // 使用 keyword 參數以同時支援寶可夢 (Pokemon) 與訓練家/道具卡 (Trainer/Item)，並帶 regulation_header_search_item0=all 涵蓋全世代規約卡牌 (如劍盾 S8b)
+        const officialUrl = `https://www.pokemon-card.com/card-search/resultAPI.php?keyword=${encodeURIComponent(cleanJa)}&regulation_header_search_item0=all&sm_and_keyword=true`;
         const res = await fetch(officialUrl, { signal: AbortSignal.timeout(4000) });
         if (res.ok) {
           const data = await res.json();
           if (data && data.cardList && data.cardList.length > 0) {
-            // 找出符合該擴充包 (不分大小寫比對，如 /M2a/ 與 M2A) 的卡片
+            // 找出符合該擴充包 (不分大小寫比對，如 /M2a/ 與 M2A, /S8b/ 與 S8B) 的卡片
             const matchedList = data.cardList.filter(c => 
               c.cardThumbFile && c.cardThumbFile.toLowerCase().includes(`/${jpSet.toLowerCase()}/`)
             );
             if (matchedList.length > 0) {
-              // 若卡號是秘卡/全圖 (通常卡號大於普通卡總數)，排在擴充包後段 (AR/SR/SAR 特畫)
+              // 若卡號是秘卡/全圖 (通常卡號大於普通卡總數)，排在擴充包後段 (AR/SR/SAR/CSR 特畫)
               const chosen = matchedList.length > 1 ? matchedList[matchedList.length - 1] : matchedList[0];
               const fullOfficialUrl = `https://www.pokemon-card.com${chosen.cardThumbFile}`;
               console.log(`Auto-scraped official JP image for ${setCode} #${cardNumber}: ${fullOfficialUrl}`);
@@ -402,10 +523,22 @@ const CARD_NAME_TRANSLATIONS = {
   'サーファー': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   'Surfer': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
   '衝浪手': { zh: '衝浪手 (Surfer)', en: 'Surfer', ja: 'サーファー' },
+  'ハピナスV': { zh: '幸福蛋V (Blissey V)', en: 'Blissey V', ja: 'ハピナスV' },
+  'ハピナス': { zh: '幸福蛋 (Blissey)', en: 'Blissey', ja: 'ハピナス' },
+  'Blissey V': { zh: '幸福蛋V (Blissey V)', en: 'Blissey V', ja: 'ハピナスV' },
+  'Blissey': { zh: '幸福蛋 (Blissey)', en: 'Blissey', ja: 'ハピナス' },
+  '幸福蛋': { zh: '幸福蛋 (Blissey)', en: 'Blissey', ja: 'ハピナス' },
+  'メガサーナイトex': { zh: '超級沙奈朵ex (Mega Gardevoir ex)', en: 'Mega Gardevoir ex', ja: 'メガサーナイトex' },
+  'Mega Gardevoir ex': { zh: '超級沙奈朵ex (Mega Gardevoir ex)', en: 'Mega Gardevoir ex', ja: 'メガサーナイトex' },
+  'サーナイト': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
+  'Gardevoir': { zh: '沙奈朵 (Gardevoir)', en: 'Gardevoir', ja: 'サーナイト' },
+  'メガゼ拉オラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
   'メガゼラオラex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
   'Mega Zeraora ex': { zh: '超級捷拉奧拉ex (Mega Zeraora ex)', en: 'Mega Zeraora ex', ja: 'メガゼラオラex' },
+  'ゼラオラ': { zh: '捷拉奧拉 (Zeraora)', en: 'Zeraora', ja: 'ゼラオラ' },
   'レシラムV': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
   'Reshiram V': { zh: '萊希拉姆V (Reshiram V)', en: 'Reshiram V', ja: 'レシラムV' },
+  'レシラム': { zh: '萊希拉姆 (Reshiram)', en: 'Reshiram', ja: 'レシラム' },
   'デカグース': { zh: '貓鼬冠 (Gumshoos)', en: 'Gumshoos', ja: 'デカグース' },
   'Gumshoos': { zh: '貓鼬冠 (Gumshoos)', en: 'Gumshoos', ja: 'デカグース' },
   'ルンパッパ': { zh: '樂天河童 (Ludicolo)', en: 'Ludicolo', ja: 'ルンパッパ' },
@@ -544,28 +677,19 @@ app.post('/api/cards', async (req, res) => {
       return res.status(400).json({ error: 'rawId and language are required' });
     }
 
-    // 智慧解析 ID 格式，支援標準、緊密無空格或純數字番號
+    // 智慧解析與正規化 ID 格式，消除有無空格、斜線零散空格或大小寫差異
     const cleanRaw = rawId.trim();
+    const normalized = normalizeCardId(cleanRaw);
     let setCode = '';
     let cardNumber = '';
     let totalNumber = '';
+    let canonicalRawId = cleanRaw;
 
-    const matchWithSpace = cleanRaw.match(/^([A-Za-z0-9\.\-]+)\s+([0-9]+)(?:\/([0-9]+))?$/);
-    const matchCompact = cleanRaw.match(/^([A-Za-z]+[0-9]*[A-Za-z]*?)([0-9]{2,4})(?:\/([0-9]+))?$/);
-    const matchNumberOnly = cleanRaw.match(/^([0-9]+)(?:\/([0-9]+))?$/);
-
-    if (matchWithSpace) {
-      setCode = matchWithSpace[1].toUpperCase();
-      cardNumber = matchWithSpace[2];
-      totalNumber = matchWithSpace[3] || '';
-    } else if (matchCompact) {
-      setCode = matchCompact[1].toUpperCase();
-      cardNumber = matchCompact[2];
-      totalNumber = matchCompact[3] || '';
-    } else if (matchNumberOnly) {
-      setCode = 'CARD';
-      cardNumber = matchNumberOnly[1];
-      totalNumber = matchNumberOnly[2] || '';
+    if (normalized) {
+      setCode = normalized.setCode;
+      cardNumber = normalized.cardNumber;
+      totalNumber = normalized.totalNumber;
+      canonicalRawId = normalized.formatted;
     } else {
       const parts = cleanRaw.split(/[\s\-_]+/);
       setCode = (parts[0] || 'CARD').toUpperCase().replace(/[^A-Za-z0-9]/g, '');
@@ -573,6 +697,7 @@ app.post('/api/cards', async (req, res) => {
       const [cn, tn] = numPart.split('/');
       cardNumber = (cn || '001').replace(/[^0-9]/g, '');
       totalNumber = (tn || '').replace(/[^0-9]/g, '');
+      canonicalRawId = `${setCode} ${cardNumber}${totalNumber ? '/' + totalNumber : ''}`;
     }
 
     // 確保 customId 絕對不包含斜線 (/) 與 URL 非法字元
@@ -623,7 +748,7 @@ app.post('/api/cards', async (req, res) => {
       `;
 
       db.run(insertSql, [
-        customId, rawId.toUpperCase(), language, setCode, cardNumber, totalNumber,
+        customId, canonicalRawId, language, setCode, cardNumber, totalNumber,
         nameZh, nameEn, nameJa, rarity, category, imageUrl,
         marketPrice, origPrice, origCurr, parseFloat(buyPriceTWD) || 0,
         priceSource, now, now, nextOrder

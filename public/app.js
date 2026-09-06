@@ -56,6 +56,74 @@ const scanDetectedId = document.getElementById('scanDetectedId');
 const scanBuyPrice = document.getElementById('scanBuyPrice');
 const btnConfirmScanAdd = document.getElementById('btnConfirmScanAdd');
 
+// 卡牌 ID 智慧正規化函數：消除有無空格差異 (例如 'M5F112/081' 與 'M5F 112/081')
+function normalizeCardId(input) {
+  if (!input || typeof input !== 'string') return null;
+  let raw = input.trim().replace(/\s*\/\s*/, '/');
+  
+  // 情況 1: 已有空格分隔 'SET_CODE NUM' 或 'SET_CODE NUM/TOTAL'
+  const spaceMatch = raw.match(/^([A-Za-z0-9\.\-]+)\s+([0-9]+)(?:\/([0-9]+))?$/);
+  if (spaceMatch) {
+    const setCode = spaceMatch[1].toUpperCase();
+    const cardNumber = spaceMatch[2];
+    const totalNumber = spaceMatch[3] || '';
+    const formatted = `${setCode} ${cardNumber}${totalNumber ? '/' + totalNumber : ''}`;
+    return { setCode, cardNumber, totalNumber, formatted };
+  }
+  
+  // 情況 2: 無空格但有斜線，例如 'M5F112/081', 'M2AF226/193', 'S8BF254/184', 'SVI242/198', 'M2083/080'
+  const slashMatch = raw.match(/^(.+)\/([0-9]+)$/);
+  if (slashMatch) {
+    const beforeSlash = slashMatch[1].trim();
+    const totalNumber = slashMatch[2].trim();
+    const letterNumMatch = beforeSlash.match(/^([A-Za-z0-9]*[A-Za-z])([0-9]+)$/);
+    if (letterNumMatch) {
+      const letterPart = letterNumMatch[1].toUpperCase();
+      const numPart = letterNumMatch[2];
+      if (numPart.length > 3) {
+        const cardDigits = Math.min(Math.max(totalNumber.length, 3), numPart.length - 1);
+        const cardNumber = numPart.slice(-cardDigits);
+        const setCode = letterPart + numPart.slice(0, -cardDigits);
+        const formatted = `${setCode} ${cardNumber}/${totalNumber}`;
+        return { setCode, cardNumber, totalNumber, formatted };
+      }
+      const setCode = letterPart;
+      const cardNumber = numPart;
+      const formatted = `${setCode} ${cardNumber}/${totalNumber}`;
+      return { setCode, cardNumber, totalNumber, formatted };
+    }
+  }
+  
+  // 情況 3: 無空格無斜線，例如 'M5F112', 'S8BF254', 'SVI242'
+  const compactMatch = raw.match(/^([A-Za-z0-9]*[A-Za-z])([0-9]+)$/);
+  if (compactMatch) {
+    const letterPart = compactMatch[1].toUpperCase();
+    const numPart = compactMatch[2];
+    if (numPart.length > 3) {
+      const cardNumber = numPart.slice(-3);
+      const setCode = letterPart + numPart.slice(0, -3);
+      const formatted = `${setCode} ${cardNumber}`;
+      return { setCode, cardNumber, totalNumber: '', formatted };
+    }
+    const setCode = letterPart;
+    const cardNumber = numPart;
+    const formatted = `${setCode} ${cardNumber}`;
+    return { setCode, cardNumber, totalNumber: '', formatted };
+  }
+
+  // 兜底純數字
+  const numOnly = raw.match(/^([0-9]+)(?:\/([0-9]+))?$/);
+  if (numOnly) {
+    return {
+      setCode: 'CARD',
+      cardNumber: numOnly[1],
+      totalNumber: numOnly[2] || '',
+      formatted: `CARD ${numOnly[1]}${numOnly[2] ? '/' + numOnly[2] : ''}`
+    };
+  }
+  return null;
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   initViewMode();
@@ -272,18 +340,38 @@ function setupEventListeners() {
   btnCloseAddModal.addEventListener('click', () => addCardModalEl.classList.remove('active'));
   btnCancelAdd.addEventListener('click', () => addCardModalEl.classList.remove('active'));
 
+  // 自動格式化卡號輸入框 (消除有無空格差異)
+  inputRawId.addEventListener('blur', () => {
+    const norm = normalizeCardId(inputRawId.value);
+    if (norm) {
+      inputRawId.value = norm.formatted;
+    }
+  });
+
+  inputRawId.addEventListener('change', () => {
+    const norm = normalizeCardId(inputRawId.value);
+    if (norm) {
+      inputRawId.value = norm.formatted;
+    }
+  });
+
   addCardForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const submitBtn = document.getElementById('btnSubmitAdd');
     submitBtn.disabled = true;
     submitBtn.innerText = '查詢網路價格並入庫...';
 
+    // 提交前自動將輸入正規化
+    const norm = normalizeCardId(inputRawId.value);
+    const finalRawId = norm ? norm.formatted : inputRawId.value.trim();
+    inputRawId.value = finalRawId;
+
     try {
       const res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rawId: inputRawId.value,
+          rawId: finalRawId,
           language: inputLang.value,
           buyPriceTWD: inputBuyPrice.value || 0
         })
@@ -291,6 +379,7 @@ function setupEventListeners() {
       if (res.ok) {
         addCardModalEl.classList.remove('active');
         addCardForm.reset();
+        showToast(`🎉 成功入庫卡片：${finalRawId}`);
         await fetchCardsAndStats();
       } else {
         alert('新增失敗，請檢查卡號代碼');
@@ -328,12 +417,17 @@ function setupEventListeners() {
   btnConfirmScanAdd.addEventListener('click', async () => {
     btnConfirmScanAdd.disabled = true;
     btnConfirmScanAdd.innerText = '入庫中...';
+    
+    const norm = normalizeCardId(scanDetectedId.value);
+    const finalRawId = norm ? norm.formatted : scanDetectedId.value.trim();
+    scanDetectedId.value = finalRawId;
+
     try {
       const res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rawId: scanDetectedId.value,
+          rawId: finalRawId,
           language: scanDetectedLang.value,
           buyPriceTWD: scanBuyPrice.value || 0,
           capturedImage: scannedImagePreview.src
@@ -342,6 +436,7 @@ function setupEventListeners() {
       if (res.ok) {
         scanModalEl.classList.remove('active');
         resetScanState();
+        showToast(`🎉 成功入庫卡片：${finalRawId}`);
         await fetchCardsAndStats();
       }
     } catch (err) {
